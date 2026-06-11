@@ -1,0 +1,6 @@
+{
+  "name": "ResQ Lanka",
+  "description": "An emergency management platform utilizing advanced data structures (Heaps, FIFO Queues, LIFO Stacks, and Dijkstra's Shortest Path) to coordinate disaster relief in Sri Lanka.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
