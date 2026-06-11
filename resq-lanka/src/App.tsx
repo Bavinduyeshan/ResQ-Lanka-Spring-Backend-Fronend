@@ -503,7 +503,12 @@ export default function App() {
                     />
                 )}
 
-                {currentTab === 'routes' && <RoutePlanner incidents={incidents} />}
+                {currentTab === 'routes' && (
+                    <RoutePlanner
+                        incidents={incidents}
+                        shelters={shelters}
+                    />
+                )}
 
                 {currentTab === 'resources' && (
                     <ResourceManagement

@@ -1,10 +1,62 @@
+# ======================
+# Java / Spring Boot
+# ======================
+
 HELP.md
 target/
-.mvn/wrapper/maven-wrapper.jar
+.gradle/
+build/
+
 !**/src/main/**/target/
 !**/src/test/**/target/
 
-### STS ###
+.mvn/wrapper/maven-wrapper.jar
+
+# Logs
+*.log
+
+# ======================
+# Node.js
+# ======================
+
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Environment files
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Build folders
+dist/
+coverage/
+
+# ======================
+# React / Vite
+# ======================
+
+.vite/
+vite.svg
+
+# ======================
+# IDEs
+# ======================
+
+# VS Code
+.vscode/
+
+# IntelliJ
+.idea/
+*.iws
+*.iml
+*.ipr
+
+# STS
 .apt_generated
 .classpath
 .factorypath
@@ -13,21 +65,15 @@ target/
 .springBeans
 .sts4-cache
 
-### IntelliJ IDEA ###
-.idea
-*.iws
-*.iml
-*.ipr
-
-### NetBeans ###
+# NetBeans
 /nbproject/private/
 /nbbuild/
-/dist/
 /nbdist/
 /.nb-gradle/
-build/
-!**/src/main/**/build/
-!**/src/test/**/build/
 
-### VS Code ###
-.vscode/
+# ======================
+# OS Files
+# ======================
+
+.DS_Store
+Thumbs.db

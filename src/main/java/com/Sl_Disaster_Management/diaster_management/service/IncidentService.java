@@ -44,13 +44,17 @@ public class IncidentService {
 
         Incident saved = incidentRepository.save(incident);
 
-        // Insert into DSA structures
-        incidentMaxHeap.insert(saved);
-        incidentQueue.enqueue(saved);
+        // ✅ Only insert into DSA structures if ACTIVE
+        if (saved.getStatus() == Incident.Status.ACTIVE) {
+            incidentMaxHeap.insert(saved);
+            // FIFO queue is for PENDING reports only — don't add ACTIVE here
+        } else if (saved.getStatus() == Incident.Status.PENDING) {
+            incidentQueue.enqueue(saved);  // PENDING goes to FIFO queue only
+        }
 
-        // Log to action stack and DB
         logAction(ActionHistory.ActionType.INCIDENT_CREATE, "Incident", saved.getId(),
-                "Created incident: " + saved.getDisasterType() + " in " + saved.getDistrict(), null, saved.toString());
+                "Created incident: " + saved.getDisasterType() + " in " + saved.getDistrict(),
+                null, saved.toString());
 
         return IncidentDTOs.IncidentResponse.fromEntity(saved);
     }
@@ -138,9 +142,20 @@ public class IncidentService {
         return top != null ? IncidentDTOs.IncidentResponse.fromEntity(top) : null;
     }
 
+    @Transactional
     public IncidentDTOs.IncidentResponse extractHighestPriority() {
         Incident top = incidentMaxHeap.extractMax();
-        return top != null ? IncidentDTOs.IncidentResponse.fromEntity(top) : null;
+        if (top == null) return null;
+
+        // ✅ Promote ACTIVE → RESOLVED and persist
+        top.setStatus(Incident.Status.RESOLVED);
+        Incident resolved = incidentRepository.save(top);
+
+        logAction(ActionHistory.ActionType.INCIDENT_UPDATE, "Incident", resolved.getId(),
+                "Dispatched & resolved: " + resolved.getDisasterType() + " in " + resolved.getDistrict(),
+                "ACTIVE", "RESOLVED");
+
+        return IncidentDTOs.IncidentResponse.fromEntity(resolved);
     }
 
     public int getPriorityQueueSize() {
@@ -156,9 +171,29 @@ public class IncidentService {
                 .collect(Collectors.toList());
     }
 
+    // ========== QUEUE (FIFO) OPERATIONS ==========
+
+    /**
+     * Dequeue the first PENDING incident, promote it to ACTIVE,
+     * persist the status change, and insert it into the priority heap.
+     */
+    @Transactional
     public IncidentDTOs.IncidentResponse dequeueIncident() {
         Incident dequeued = incidentQueue.dequeue();
-        return dequeued != null ? IncidentDTOs.IncidentResponse.fromEntity(dequeued) : null;
+        if (dequeued == null) return null;
+
+        // ✅ Promote PENDING → ACTIVE
+        dequeued.setStatus(Incident.Status.ACTIVE);
+        Incident promoted = incidentRepository.save(dequeued);
+
+        // ✅ Now insert into the priority heap
+        incidentMaxHeap.insert(promoted);
+
+        logAction(ActionHistory.ActionType.INCIDENT_UPDATE, "Incident", promoted.getId(),
+                "Promoted incident to ACTIVE: " + promoted.getDisasterType() + " in " + promoted.getDistrict(),
+                "PENDING", "ACTIVE");
+
+        return IncidentDTOs.IncidentResponse.fromEntity(promoted);
     }
 
     public IncidentDTOs.IncidentResponse peekQueue() {
@@ -168,13 +203,22 @@ public class IncidentService {
 
     // ========== REFRESH HEAP FROM DB ==========
 
+    // ========== REFRESH HEAP FROM DB ==========
+
     @Transactional(readOnly = true)
     public void refreshHeapFromDatabase() {
         incidentMaxHeap.clear();
         incidentQueue.clear();
+
+        // ✅ Only ACTIVE incidents go into the heap
         List<Incident> activeIncidents = incidentRepository.findByStatus(Incident.Status.ACTIVE);
         for (Incident incident : activeIncidents) {
             incidentMaxHeap.insert(incident);
+        }
+
+        // ✅ Only PENDING incidents go into the FIFO queue
+        List<Incident> pendingIncidents = incidentRepository.findByStatus(Incident.Status.PENDING);
+        for (Incident incident : pendingIncidents) {
             incidentQueue.enqueue(incident);
         }
     }
