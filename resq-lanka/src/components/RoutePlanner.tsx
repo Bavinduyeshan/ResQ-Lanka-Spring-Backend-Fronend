@@ -1,333 +1,422 @@
-import React, { useState, useEffect } from 'react';
-import { Route, Navigation, MapPin, Sparkles, RefreshCcw, HelpCircle } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Route, Navigation, MapPin, Sparkles } from 'lucide-react';
 
 interface DijkstraResult {
-  start: string;
-  destination: string;
   path: string[];
   distanceKm: number;
-  message: string;
 }
 
+// All 25 Sri Lanka districts with relative geographic coordinates (viewBox 480x620)
+const NODE_COORDS: Record<string, { x: number; y: number }> = {
+  'Jaffna':        { x: 210, y: 28  },
+  'Kilinochchi':   { x: 230, y: 68  },
+  'Mannar':        { x: 128, y: 90  },
+  'Vavuniya':      { x: 245, y: 108 },
+  'Mullaitivu':    { x: 300, y: 78  },
+  'Trincomalee':   { x: 340, y: 148 },
+  'Anuradhapura':  { x: 210, y: 165 },
+  'Puttalam':      { x: 120, y: 200 },
+  'Kurunegala':    { x: 188, y: 238 },
+  'Polonnaruwa':   { x: 305, y: 200 },
+  'Batticaloa':    { x: 370, y: 255 },
+  'Matale':        { x: 240, y: 268 },
+  'Kandy':         { x: 218, y: 295 },
+  'Kegalle':       { x: 175, y: 318 },
+  'Ampara':        { x: 348, y: 310 },
+  'Gampaha':       { x: 142, y: 348 },
+  'Colombo':       { x: 110, y: 370 },
+  'Nuwara Eliya':  { x: 255, y: 340 },
+  'Badulla':       { x: 295, y: 348 },
+  'Monaragala':    { x: 315, y: 388 },
+  'Kalutara':      { x: 120, y: 400 },
+  'Ratnapura':     { x: 188, y: 400 },
+  'Galle':         { x: 145, y: 450 },
+  'Matara':        { x: 195, y: 468 },
+  'Hambantota':    { x: 270, y: 470 },
+};
+
+// 49 edges covering all major Sri Lanka road connections (distances in km)
+const EDGES: [string, string, number][] = [
+  ['Jaffna', 'Kilinochchi', 45],
+  ['Jaffna', 'Mannar', 100],
+  ['Kilinochchi', 'Mannar', 80],
+  ['Kilinochchi', 'Vavuniya', 55],
+  ['Kilinochchi', 'Mullaitivu', 60],
+  ['Mullaitivu', 'Trincomalee', 115],
+  ['Mullaitivu', 'Vavuniya', 80],
+  ['Vavuniya', 'Anuradhapura', 55],
+  ['Vavuniya', 'Trincomalee', 140],
+  ['Mannar', 'Puttalam', 120],
+  ['Mannar', 'Anuradhapura', 100],
+  ['Anuradhapura', 'Puttalam', 90],
+  ['Anuradhapura', 'Kurunegala', 95],
+  ['Anuradhapura', 'Polonnaruwa', 110],
+  ['Anuradhapura', 'Trincomalee', 106],
+  ['Trincomalee', 'Polonnaruwa', 110],
+  ['Trincomalee', 'Batticaloa', 110],
+  ['Puttalam', 'Kurunegala', 75],
+  ['Kurunegala', 'Matale', 65],
+  ['Kurunegala', 'Kandy', 78],
+  ['Kurunegala', 'Kegalle', 65],
+  ['Kurunegala', 'Gampaha', 78],
+  ['Polonnaruwa', 'Batticaloa', 90],
+  ['Polonnaruwa', 'Matale', 75],
+  ['Polonnaruwa', 'Ampara', 120],
+  ['Batticaloa', 'Ampara', 50],
+  ['Matale', 'Kandy', 26],
+  ['Kandy', 'Nuwara Eliya', 75],
+  ['Kandy', 'Kegalle', 42],
+  ['Kandy', 'Badulla', 155],
+  ['Kegalle', 'Gampaha', 55],
+  ['Kegalle', 'Colombo', 70],
+  ['Kegalle', 'Ratnapura', 55],
+  ['Ampara', 'Badulla', 90],
+  ['Ampara', 'Monaragala', 80],
+  ['Gampaha', 'Colombo', 28],
+  ['Colombo', 'Kalutara', 42],
+  ['Colombo', 'Ratnapura', 101],
+  ['Nuwara Eliya', 'Badulla', 95],
+  ['Nuwara Eliya', 'Ratnapura', 80],
+  ['Badulla', 'Monaragala', 65],
+  ['Monaragala', 'Hambantota', 90],
+  ['Ratnapura', 'Kalutara', 68],
+  ['Ratnapura', 'Matara', 130],
+  ['Ratnapura', 'Hambantota', 150],
+  ['Kalutara', 'Galle', 72],
+  ['Galle', 'Matara', 45],
+  ['Matara', 'Hambantota', 65],
+];
+
+type Graph = Record<string, [string, number][]>;
+
+function buildGraph(): Graph {
+  const g: Graph = {};
+  for (const name of Object.keys(NODE_COORDS)) g[name] = [];
+  for (const [u, v, w] of EDGES) {
+    g[u].push([v, w]);
+    g[v].push([u, w]);
+  }
+  return g;
+}
+
+function dijkstra(graph: Graph, start: string, end: string): DijkstraResult | null {
+  const dist: Record<string, number> = {};
+  const prev: Record<string, string | null> = {};
+  const visited = new Set<string>();
+
+  for (const n of Object.keys(NODE_COORDS)) {
+    dist[n] = Infinity;
+    prev[n] = null;
+  }
+  dist[start] = 0;
+
+  const pq: [number, string][] = [[0, start]];
+
+  while (pq.length > 0) {
+    pq.sort((a, b) => a[0] - b[0]);
+    const [d, u] = pq.shift()!;
+    if (visited.has(u)) continue;
+    visited.add(u);
+    if (u === end) break;
+    for (const [v, w] of graph[u]) {
+      if (!visited.has(v) && dist[u] + w < dist[v]) {
+        dist[v] = dist[u] + w;
+        prev[v] = u;
+        pq.push([dist[v], v]);
+      }
+    }
+  }
+
+  if (dist[end] === Infinity) return null;
+
+  const path: string[] = [];
+  let cur: string | null = end;
+  while (cur) {
+    path.unshift(cur);
+    cur = prev[cur];
+  }
+
+  return { path, distanceKm: dist[end] };
+}
+
+const GRAPH = buildGraph();
+const ALL_DISTRICTS = Object.keys(NODE_COORDS).sort();
+
 export default function RoutePlanner() {
-  const [districts, setDistricts] = useState<string[]>([]);
   const [startDistrict, setStartDistrict] = useState('Colombo');
-  const [destDistrict, setDestDistrict] = useState('Badulla');
-  const [routingResult, setRoutingResult] = useState<DijkstraResult | null>(null);
+  const [destDistrict, setDestDistrict] = useState('Jaffna');
+  const [result, setResult] = useState<DijkstraResult | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
 
-  // Settle geographical plotting coordinates for districts to draw a gorgeous SVG network map of Sri Lanka!
-  // Relative placement coordinates inside a 600x450 clean viewport box
-  const nodeCoords: Record<string, { x: number; y: number; label: string }> = {
-    'Jaffna': { x: 280, y: 40, label: 'JPL Jaffna' },
-    'Anuradhapura': { x: 290, y: 150, label: 'ANP Central' },
-    'Trincomalee': { x: 390, y: 155, label: 'TRN Port' },
-    'Kurunegala': { x: 240, y: 240, label: 'KRG Hub' },
-    'Batticaloa': { x: 420, y: 230, label: 'BTC Coast' },
-    'Kandy': { x: 310, y: 260, label: 'KND Hills' },
-    'Gampaha': { x: 190, y: 310, label: 'GMP Sector' },
-    'Colombo': { x: 170, y: 340, label: 'DMC HQ Colombo' },
-    'Badulla': { x: 380, y: 310, label: 'BDL Valley' },
-    'Ratnapura': { x: 260, y: 350, label: 'RTP Basin' },
-    'Kalutara': { x: 180, y: 380, label: 'KLT Sector' },
-    'Galle': { x: 210, y: 415, label: 'GAL Port' },
-    'Matara': { x: 260, y: 425, label: 'MTR South' }
-  };
-
-  // Pre-seed the connections list to draw network links
-  const graphConnections = [
-    { u: 'Colombo', v: 'Gampaha', w: 30 },
-    { u: 'Colombo', v: 'Kalutara', w: 43 },
-    { u: 'Colombo', v: 'Ratnapura', w: 101 },
-    { u: 'Gampaha', v: 'Kurunegala', w: 78 },
-    { u: 'Gampaha', v: 'Kandy', w: 85 },
-    { u: 'Kurunegala', v: 'Anuradhapura', w: 110 },
-    { u: 'Kurunegala', v: 'Kandy', w: 42 },
-    { u: 'Kalutara', v: 'Galle', w: 75 },
-    { u: 'Galle', v: 'Matara', w: 45 },
-    { u: 'Matara', v: 'Ratnapura', w: 140 },
-    { u: 'Ratnapura', v: 'Badulla', w: 120 },
-    { u: 'Kandy', v: 'Badulla', w: 115 },
-    { u: 'Kandy', v: 'Anuradhapura', w: 138 },
-    { u: 'Anuradhapura', v: 'Jaffna', w: 196 },
-    { u: 'Anuradhapura', v: 'Trincomalee', w: 106 },
-    { u: 'Trincomalee', v: 'Batticaloa', w: 135 },
-    { u: 'Batticaloa', v: 'Badulla', w: 125 },
-    { u: 'Jaffna', v: 'Trincomalee', w: 230 }
-  ];
-
-  const fetchDistricts = async () => {
-    try {
-      const res = await fetch('/api/route/districts');
-      if (res.ok) {
-        const data = await res.json();
-        setDistricts(data);
-      }
-    } catch (err) {
-      console.error(err);
+  // Track path edges as a Set of "A|B" strings for fast lookup
+  const pathEdges = new Set<string>();
+  const pathNodes = new Set<string>();
+  if (result) {
+    for (const n of result.path) pathNodes.add(n);
+    for (let i = 0; i < result.path.length - 1; i++) {
+      pathEdges.add(result.path[i] + '|' + result.path[i + 1]);
+      pathEdges.add(result.path[i + 1] + '|' + result.path[i]);
     }
-  };
+  }
 
-  const calculateOptimalRoute = async () => {
+  const isEdgeInPath = (u: string, v: string) =>
+      pathEdges.has(u + '|' + v);
+
+  const handleCalculate = useCallback(() => {
     if (startDistrict === destDistrict) {
-      setErrorMessage('Start and Destination districts cannot be identical.');
-      setRoutingResult(null);
+      setErrorMessage('Start and destination must be different districts.');
+      setResult(null);
       return;
     }
-
     setErrorMessage('');
     setIsLoading(true);
-
-    try {
-      const res = await fetch('/api/route/shortest-path', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ startDistrict, destinationDistrict: destDistrict })
-      });
-
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Dijkstra computations failed');
+    // Simulate async (swap for real API call if needed)
+    setTimeout(() => {
+      const res = dijkstra(GRAPH, startDistrict, destDistrict);
+      if (!res) {
+        setErrorMessage('No route found between selected districts.');
+        setResult(null);
+      } else {
+        setResult(res);
       }
-
-      setRoutingResult(data);
-    } catch (err: any) {
-      setErrorMessage(err.message || 'Route planning disconnected.');
-      setRoutingResult(null);
-    } finally {
       setIsLoading(false);
-    }
+    }, 150);
+  }, [startDistrict, destDistrict]);
+
+  const handleStartChange = (val: string) => {
+    setStartDistrict(val);
+    setResult(null);
+    setErrorMessage('');
   };
 
-  useEffect(() => {
-    fetchDistricts();
-  }, []);
-
-  // Check if a link is part of the computed shortest path to highlight it
-  const isLinkInShortestPath = (u: string, v: string) => {
-    if (!routingResult || !routingResult.path) return false;
-    const path = routingResult.path;
-    for (let i = 0; i < path.length - 1; i++) {
-      if ((path[i] === u && path[i + 1] === v) || (path[i] === v && path[i + 1] === u)) {
-        return true;
-      }
-    }
-    return false;
+  const handleDestChange = (val: string) => {
+    setDestDistrict(val);
+    setResult(null);
+    setErrorMessage('');
   };
 
   return (
-    <div className="space-y-6" id="dijkstra-router-view">
-      {/* Search Header */}
-      <div className="bg-white p-6 rounded-3xl border border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-xs">
-        <div>
-          <h2 className="text-xl font-bold font-sans text-slate-800 flex items-center gap-2">
-            <Route className="text-blue-500 w-5.5 h-5.5" /> GPS Dijkstra Shortest Path Planner
-          </h2>
-          <p className="text-sm text-slate-500 mt-1">Select dispatch sectors to calculate lowest latency travel distances and route sequences.</p>
-        </div>
-      </div>
-
-      {/* Selectors and Results Area */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Selectors Panel */}
-        <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-xs space-y-6 flex flex-col justify-between">
-          <div className="space-y-4">
-            <h3 className="font-bold text-slate-800 text-sm border-b border-slate-50 pb-3 flex items-center gap-2 uppercase tracking-wide">
-              <Navigation className="text-blue-500 w-4 h-4" /> Routing Sectors
-            </h3>
-
-            {errorMessage && (
-              <div className="p-3 bg-red-50 text-red-800 rounded-xl border border-red-200 text-xs">
-                {errorMessage}
-              </div>
-            )}
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Start dispatch Area *</label>
-              <select
-                value={startDistrict}
-                onChange={(e) => setStartDistrict(e.target.value)}
-                className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 bg-slate-50 text-slate-800 text-sm focus:bg-white cursor-pointer"
-              >
-                {districts.map(d => (
-                  <option key={d} value={d}>{d} Sector</option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Destination Target *</label>
-              <select
-                value={destDistrict}
-                onChange={(e) => setDestDistrict(e.target.value)}
-                className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 bg-slate-50 text-slate-800 text-sm focus:bg-white cursor-pointer"
-              >
-                {districts.map(d => (
-                  <option key={d} value={d}>{d} Sector</option>
-                ))}
-              </select>
-            </div>
-
-            <button
-              onClick={calculateOptimalRoute}
-              disabled={isLoading}
-              className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl text-sm transition-all shadow-md cursor-pointer disabled:opacity-50 flex items-center justify-center gap-1.5"
-              id="btn-trigger-dijkstra"
-            >
-              <Route className="w-4 h-4" /> {isLoading ? 'Calculating Algorithm...' : 'Compute Shortest Path'}
-            </button>
+      <div className="space-y-5" id="dijkstra-router-view">
+        {/* Header */}
+        <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex items-start justify-between gap-4">
+          <div>
+            <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+              <Route className="text-blue-500 w-5 h-5" />
+              Sri Lanka Route Planner
+            </h2>
+            <p className="text-sm text-slate-500 mt-0.5">
+              Shortest path across all 25 districts using Dijkstra's algorithm.
+            </p>
           </div>
+        </div>
 
-          {/* Computed Results card */}
-          {routingResult && (
-            <div className="bg-blue-50/50 border border-blue-100 p-5 rounded-2xl space-y-4 mt-6">
-              <span className="text-[10px] font-extrabold uppercase tracking-widest text-blue-700 bg-blue-100 px-2.5 py-1 rounded-md">
-                Dijkstra optimal Output
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+          {/* Control Panel */}
+          <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm flex flex-col gap-5">
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 flex items-center gap-1.5 mb-3">
+                <Navigation className="w-3.5 h-3.5 text-blue-500" /> Routing
+              </p>
+
+              {errorMessage && (
+                  <div className="mb-3 p-2.5 bg-red-50 text-red-700 border border-red-100 rounded-xl text-xs">
+                    {errorMessage}
+                  </div>
+              )}
+
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-1">
+                    Start district
+                  </label>
+                  <select
+                      value={startDistrict}
+                      onChange={(e) => handleStartChange(e.target.value)}
+                      className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 text-slate-800 text-sm focus:outline-none focus:bg-white cursor-pointer"
+                  >
+                    {ALL_DISTRICTS.map((d) => (
+                        <option key={d} value={d}>{d}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-1">
+                    Destination district
+                  </label>
+                  <select
+                      value={destDistrict}
+                      onChange={(e) => handleDestChange(e.target.value)}
+                      className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 text-slate-800 text-sm focus:outline-none focus:bg-white cursor-pointer"
+                  >
+                    {ALL_DISTRICTS.map((d) => (
+                        <option key={d} value={d}>{d}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <button
+                    onClick={handleCalculate}
+                    disabled={isLoading}
+                    className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white font-semibold rounded-xl text-sm transition-colors shadow-sm cursor-pointer disabled:opacity-50 flex items-center justify-center gap-1.5"
+                >
+                  <Route className="w-4 h-4" />
+                  {isLoading ? 'Calculating…' : 'Find shortest path'}
+                </button>
+              </div>
+            </div>
+
+            {/* Result */}
+            {result && (
+                <div className="bg-blue-50/60 border border-blue-100 rounded-2xl p-4 space-y-3">
+              <span className="text-[9px] font-extrabold uppercase tracking-widest text-blue-700 bg-blue-100 px-2 py-0.5 rounded-md">
+                Optimal route
               </span>
 
-              <div className="space-y-1">
-                <span className="text-[10px] uppercase font-bold text-slate-400">Total Route Distance</span>
-                <p className="text-3xl font-extrabold text-blue-600">{routingResult.distanceKm} <span className="text-base font-normal text-slate-500">kilometers</span></p>
-              </div>
+                  <div>
+                    <p className="text-[10px] text-slate-400 uppercase font-bold">Total distance</p>
+                    <p className="text-3xl font-extrabold text-blue-600 leading-none mt-0.5">
+                      {result.distanceKm}
+                      <span className="text-sm font-normal text-slate-400 ml-1.5">km</span>
+                    </p>
+                  </div>
 
-              <div className="space-y-2">
-                <span className="text-[10px] uppercase font-bold text-slate-400 block pb-1 border-b border-slate-100">Step Sequence ({routingResult.path.length} sectors)</span>
-                <div className="flex flex-col gap-2">
-                  {routingResult.path.map((step, idx) => (
-                    <div key={idx} className="flex items-center gap-2 text-xs font-semibold text-slate-700">
-                      <span className="w-5 h-5 rounded-full bg-blue-100 text-blue-700 font-bold flex items-center justify-center font-mono">
+                  <div>
+                    <p className="text-[10px] text-slate-400 uppercase font-bold mb-2 pb-1.5 border-b border-slate-100">
+                      Route — {result.path.length} districts
+                    </p>
+                    <div className="flex flex-col gap-1.5">
+                      {result.path.map((step, idx) => (
+                          <div key={idx} className="flex items-center gap-2 text-xs text-slate-700">
+                      <span className="w-5 h-5 rounded-full bg-blue-100 text-blue-700 font-bold text-[10px] flex items-center justify-center flex-shrink-0 font-mono">
                         {idx + 1}
                       </span>
-                      <span>{step}</span>
-                      {idx < routingResult.path.length - 1 && <span className="text-slate-400 font-mono">&rarr;</span>}
+                            <span className="font-medium">{step}</span>
+                            {idx < result.path.length - 1 && (
+                                <span className="text-slate-300 text-xs">→</span>
+                            )}
+                          </div>
+                      ))}
                     </div>
-                  ))}
+                  </div>
                 </div>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Graphical Map canvas */}
-        <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-xs lg:col-span-2 relative">
-          <div className="absolute top-4 left-4 inline-flex items-center gap-1.5 px-3 py-1 bg-slate-50 border border-slate-100 text-[10px] font-bold text-slate-400 uppercase rounded-full">
-            <Sparkles className="text-amber-500 w-3 h-3" /> Topology Network Blueprint (Scale: Sri Lanka Geography)
+            )}
           </div>
 
-          <div className="flex justify-center items-center py-6">
-            <svg 
-              className="w-full max-w-[500px] h-[480px] bg-slate-50/50 rounded-2xl border border-slate-100" 
-              viewBox="0 0 550 480"
-              xmlns="http://www.w3.org/2000/svg"
+          {/* Map Canvas */}
+          <div className="bg-white rounded-2xl border border-slate-100 shadow-sm lg:col-span-2 relative overflow-hidden">
+            <div className="absolute top-3 left-3 z-10 flex items-center gap-1.5 px-2.5 py-1 bg-white/90 border border-slate-100 text-[9px] font-bold text-slate-400 uppercase rounded-full backdrop-blur-sm">
+              <Sparkles className="text-amber-400 w-3 h-3" />
+              All 25 districts · Geographic scale
+            </div>
+
+            {/* Legend */}
+            <div className="absolute bottom-3 left-3 z-10 flex items-center gap-3 px-3 py-1.5 bg-white/90 border border-slate-100 rounded-full text-[9px] font-semibold uppercase tracking-wide backdrop-blur-sm">
+            <span className="flex items-center gap-1">
+              <span className="w-2 h-2 rounded-full bg-green-600 inline-block" /> Start
+            </span>
+              <span className="flex items-center gap-1">
+              <span className="w-2 h-2 rounded-full bg-red-600 inline-block" /> End
+            </span>
+              <span className="flex items-center gap-1">
+              <span className="w-2 h-2 rounded-full bg-blue-600 inline-block" /> Via
+            </span>
+            </div>
+
+            <svg
+                viewBox="0 0 480 520"
+                className="w-full h-full"
+                xmlns="http://www.w3.org/2000/svg"
             >
-              {/* Draw connected routes (undirected edges) */}
-              {graphConnections.map((conn, idx) => {
-                const uNode = nodeCoords[conn.u];
-                const vNode = nodeCoords[conn.v];
-                if (!uNode || !vNode) return null;
-
-                const isOptimal = isLinkInShortestPath(conn.u, conn.v);
-
+              {/* Edges */}
+              {EDGES.map(([u, v, w], idx) => {
+                const nu = NODE_COORDS[u];
+                const nv = NODE_COORDS[v];
+                if (!nu || !nv) return null;
+                const inPath = isEdgeInPath(u, v);
+                const mx = (nu.x + nv.x) / 2;
+                const my = (nu.y + nv.y) / 2;
                 return (
-                  <g key={idx}>
-                    <line
-                      x1={uNode.x}
-                      y1={uNode.y}
-                      x2={vNode.x}
-                      y2={vNode.y}
-                      stroke={isOptimal ? '#0284c7' : '#cbd5e1'}
-                      strokeWidth={isOptimal ? 4 : 1.5}
-                      strokeLinecap="round"
-                    />
-                    {/* Tiny distance tag on line middle */}
-                    <rect
-                      x={(uNode.x + vNode.x) / 2 - 12}
-                      y={(uNode.y + vNode.y) / 2 - 7}
-                      width={24}
-                      height={14}
-                      rx={3}
-                      fill={isOptimal ? '#e0f2fe' : 'white'}
-                      stroke={isOptimal ? '#0284c7' : '#e2e8f0'}
-                      strokeWidth={0.5}
-                    />
-                    <text
-                      x={(uNode.x + vNode.x) / 2}
-                      y={(uNode.y + vNode.y) / 2 + 3}
-                      fill={isOptimal ? '#0369a1' : '#64748b'}
-                      fontSize={8}
-                      fontWeight="bold"
-                      textAnchor="middle"
-                    >
-                      {conn.w}
-                    </text>
-                  </g>
+                    <g key={idx}>
+                      <line
+                          x1={nu.x} y1={nu.y}
+                          x2={nv.x} y2={nv.y}
+                          stroke={inPath ? '#2563EB' : '#CBD5E1'}
+                          strokeWidth={inPath ? 2.5 : 1}
+                          strokeLinecap="round"
+                      />
+                      <rect
+                          x={mx - 11} y={my - 6}
+                          width={22} height={12}
+                          rx={2}
+                          fill={inPath ? '#DBEAFE' : 'white'}
+                          stroke={inPath ? '#93C5FD' : '#E2E8F0'}
+                          strokeWidth={0.5}
+                      />
+                      <text
+                          x={mx} y={my + 3.5}
+                          fill={inPath ? '#1D4ED8' : '#94A3B8'}
+                          fontSize={7}
+                          fontWeight="600"
+                          textAnchor="middle"
+                      >
+                        {w}
+                      </text>
+                    </g>
                 );
               })}
 
-              {/* Draw district node points */}
-              {Object.keys(nodeCoords).map((name) => {
-                const node = nodeCoords[name];
+              {/* Nodes */}
+              {Object.entries(NODE_COORDS).map(([name, { x, y }]) => {
                 const isStart = name === startDistrict;
-                const isDest = name === destDistrict;
-                const isStep = routingResult?.path.includes(name);
+                const isDest  = name === destDistrict;
+                const isVia   = pathNodes.has(name) && !isStart && !isDest;
 
-                let outerColor = 'stroke-slate-300 fill-white';
-                let innerColor = 'fill-slate-400';
-                
+                let outerFill   = 'white';
+                let outerStroke = '#CBD5E1';
+                let innerFill   = '#94A3B8';
+                let strokeWidth = 1;
+
                 if (isStart) {
-                  outerColor = 'stroke-green-500 fill-green-50';
-                  innerColor = 'fill-green-600';
+                  outerFill = '#DCFCE7'; outerStroke = '#16A34A';
+                  innerFill = '#16A34A'; strokeWidth = 1.5;
                 } else if (isDest) {
-                  outerColor = 'stroke-red-500 fill-red-50';
-                  innerColor = 'fill-red-600';
-                } else if (isStep) {
-                  outerColor = 'stroke-blue-500 fill-blue-50';
-                  innerColor = 'fill-blue-600';
+                  outerFill = '#FEE2E2'; outerStroke = '#DC2626';
+                  innerFill = '#DC2626'; strokeWidth = 1.5;
+                } else if (isVia) {
+                  outerFill = '#DBEAFE'; outerStroke = '#2563EB';
+                  innerFill = '#2563EB'; strokeWidth = 1.2;
                 }
 
+                // Smart label placement to avoid map edges
+                let tx = x, ty = y - 12, anchor: 'middle' | 'start' | 'end' = 'middle';
+                if (x < 90)       { tx = x + 12; ty = y + 3; anchor = 'start'; }
+                else if (x > 390) { tx = x - 12; ty = y + 3; anchor = 'end'; }
+                else if (y < 45)  { ty = y + 17; }
+
+                const fontWeight = isStart || isDest || isVia ? '600' : '400';
+                const fillColor  = isStart || isDest || isVia ? '#1E293B' : '#64748B';
+
                 return (
-                  <g key={name} className="cursor-pointer group">
-                    <circle
-                      cx={node.x}
-                      cy={node.y}
-                      r={10}
-                      className={`transition-colors duration-200 stroke-2 ${outerColor}`}
-                    />
-                    <circle
-                      cx={node.x}
-                      cy={node.y}
-                      r={4}
-                      className={innerColor}
-                    />
-                    {/* Node Label tags */}
-                    <rect
-                      x={node.x - 35}
-                      y={node.y - 25}
-                      width={70}
-                      height={14}
-                      rx={3}
-                      fill="#1e293b"
-                      className="opacity-0 group-hover:opacity-100 transition-opacity"
-                    />
-                    <text
-                      x={node.x}
-                      y={node.y - 15}
-                      textAnchor="middle"
-                      fill="#1e293b"
-                      fontSize={8}
-                      fontWeight="bold"
-                      className="drop-shadow-xs"
-                    >
-                      {name}
-                    </text>
-                  </g>
+                    <g key={name}>
+                      <circle cx={x} cy={y} r={8} fill={outerFill} stroke={outerStroke} strokeWidth={strokeWidth} />
+                      <circle cx={x} cy={y} r={3} fill={innerFill} />
+                      <text
+                          x={tx} y={ty}
+                          textAnchor={anchor}
+                          fontSize={9}
+                          fontWeight={fontWeight}
+                          fill={fillColor}
+                      >
+                        {name}
+                      </text>
+                    </g>
                 );
               })}
             </svg>
           </div>
         </div>
       </div>
-    </div>
   );
 }
