@@ -67,6 +67,7 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/api/auth/**").permitAll()
                         .requestMatchers("/api/public/**").permitAll()
+                        .requestMatchers("/api/reports/emergency").permitAll()  // ← add this
                         .requestMatchers("/actuator/**").permitAll()
                         .anyRequest().authenticated()
                 );
