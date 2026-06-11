@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
-const disasterCommandHero = '/src/assets/images/tactical_island_routing_1780590372437.png';
+const disasterCommandHero = '/src/assets/images/boat.jpeg';
 
 interface LandingPageProps {
   onEnterTerminal: () => void;
