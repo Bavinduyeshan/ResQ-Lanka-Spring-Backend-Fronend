@@ -447,13 +447,13 @@ export default function App() {
 
                 {(
                     [
-                      { tab: 'dashboard', label: 'Dashboard Insights', Icon: BookOpen },
-                      { tab: 'incidents', label: 'Incident Management', Icon: ShieldAlert },
+                      { tab: 'dashboard', label: 'Dashboard', Icon: BookOpen },
+                      { tab: 'incidents', label: 'Incidents', Icon: ShieldAlert },
                       { tab: 'dsa', label: 'Core DSA Playground', Icon: Cpu },
-                      { tab: 'routes', label: 'GPS Dijkstra Map', Icon: Route },
-                      { tab: 'resources', label: 'Manage Resources', Icon: Users },
+                      { tab: 'routes', label: 'GPS Map', Icon: Route },
+                      { tab: 'resources', label: 'Resources', Icon: Users },
                       { tab: 'shelters', label: 'Relief Shelters', Icon: Home },
-                      { tab: 'reports', label: 'Reports Export', Icon: FileText },
+                      { tab: 'reports', label: 'Reports', Icon: FileText },
                     ] as const
                 ).map(({ tab, label, Icon }) => (
                     <button
