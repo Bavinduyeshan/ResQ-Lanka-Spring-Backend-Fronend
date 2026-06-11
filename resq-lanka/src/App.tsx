@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react';
+
 import {
   ShieldAlert, LogOut, Home, Route,
   BookOpen, Layers, Users, FileText, Cpu
 } from 'lucide-react';
+
 import { User, Incident, Resource, Shelter, ActionHistory, EmergencyReport } from './types';
 
 // ─── API client ───────────────────────────────────────────────
@@ -24,8 +26,6 @@ import SheltersManager from './components/SheltersManager';
 import ReportsCentre from './components/ReportsCentre';
 
 // ─── Shape adapters (backend → frontend types) ─────────────────
-// The backend returns camelCase which already matches our types.
-// These pass-throughs make intent explicit and allow future mapping.
 const toIncident = (r: IncidentResponse): Incident => ({
   id: r.id,
   disasterType: r.disasterType,
@@ -68,8 +68,6 @@ const toShelter = (s: ShelterResponse): Shelter => ({
 });
 
 // ─── Dashboard shape adapter ──────────────────────────────────
-// DashboardView expects a slightly different shape than the backend returns.
-// We normalise here so the component stays untouched.
 function adaptDashboardStats(raw: DashboardStats) {
   const assignedResources = raw.totalResources - raw.availableResources;
   const districtAnalytics: Record<string, { incidentCount: number; affectedPeople: number }> = {};
@@ -77,7 +75,7 @@ function adaptDashboardStats(raw: DashboardStats) {
   Object.entries(raw.incidentsByDistrict ?? {}).forEach(([district, count]) => {
     districtAnalytics[district] = {
       incidentCount: Number(count),
-      affectedPeople: 0, // backend doesn't return this in dashboard; we leave 0
+      affectedPeople: 0,
     };
   });
 
@@ -100,12 +98,48 @@ function adaptDashboardStats(raw: DashboardStats) {
   };
 }
 
+// ─── Helpers: persist / rehydrate user ───────────────────────
+const USER_KEY = 'currentUser';
+
+function saveUser(user: User) {
+  localStorage.setItem(USER_KEY, JSON.stringify(user));
+}
+
+function loadUser(): User | null {
+  try {
+    const raw = localStorage.getItem(USER_KEY);
+    return raw ? (JSON.parse(raw) as User) : null;
+  } catch {
+    return null;
+  }
+}
+
+function removeUser() {
+  localStorage.removeItem(USER_KEY);
+}
+
 export default function App() {
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  // Rehydrate user from localStorage on first render
+  const [currentUser, setCurrentUser] = useState<User | null>(() => {
+    if (getToken()) return loadUser();
+    return null;
+  });
+
   const [currentTab, setCurrentTab] = useState<
       'dashboard' | 'incidents' | 'dsa' | 'routes' | 'resources' | 'shelters' | 'reports'
   >('dashboard');
-  const [viewState, setViewState] = useState<'landing' | 'auth' | 'app'>('landing');
+
+  // Rehydrate viewState, but only trust 'app' if we also have a token + user
+  const [viewState, setViewState] = useState<'landing' | 'auth' | 'app'>(() => {
+    const saved = localStorage.getItem('viewState') as 'landing' | 'auth' | 'app' | null;
+    if (saved === 'app' && getToken() && loadUser()) return 'app';
+    if (saved === 'auth') return 'auth';
+    return 'landing';
+  });
+
+  useEffect(() => {
+    localStorage.setItem('viewState', viewState);
+  }, [viewState]);
 
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [resources, setResources] = useState<Resource[]>([]);
@@ -133,8 +167,8 @@ export default function App() {
         resourceApi.getAll(),
         shelterApi.getAll(),
         dashboardApi.getStats(),
-        incidentApi.getQueue(),          // FIFO queue of incidents
-        incidentApi.getPriorityQueue(),  // Max-heap priority queue
+        incidentApi.getQueue(),
+        incidentApi.getPriorityQueue(),
         actionApi.getRecent(30),
       ]);
 
@@ -150,8 +184,6 @@ export default function App() {
       if (statsData.status === 'fulfilled')
         setDashboardStats(adaptDashboardStats(statsData.value));
 
-      // FIFO queue — the backend returns IncidentResponse[] for /incidents/queue
-      // We adapt them to EmergencyReport shape for DsaVisualizer
       if (queueData.status === 'fulfilled') {
         const adapted: EmergencyReport[] = queueData.value.map((inc) => ({
           id: String(inc.id),
@@ -177,13 +209,10 @@ export default function App() {
     }
   };
 
-  // On mount: if a token already exists, try to sync immediately
+  // On mount: if token + persisted user exist, sync and stay on app view
   useEffect(() => {
-    if (getToken()) {
-      syncWorkspaceData().then(() => {
-        // Only switch to app view if we actually got data
-        setViewState('app');
-      });
+    if (getToken() && currentUser) {
+      syncWorkspaceData();
     }
   }, []);
 
@@ -195,8 +224,10 @@ export default function App() {
 
   // ─── Auth ─────────────────────────────────────────────────────
   const handleLoginSuccess = (user: User) => {
+    saveUser(user);           // ← persist to localStorage
     setCurrentUser(user);
     setViewState('app');
+    localStorage.setItem('viewState', 'app');
   };
 
   const handleLogout = async () => {
@@ -204,6 +235,7 @@ export default function App() {
       await authApi.logout();
     } finally {
       clearToken();
+      removeUser();           // ← clear persisted user
       setCurrentUser(null);
       setViewState('landing');
     }
@@ -211,24 +243,18 @@ export default function App() {
 
   // ─── Incidents ────────────────────────────────────────────────
   const handleAddIncident = async (payload: any) => {
-    try {
-      await incidentApi.create(payload);
-      await syncWorkspaceData();
-    } catch (err) { console.error(err); }
+    try { await incidentApi.create(payload); await syncWorkspaceData(); }
+    catch (err) { console.error(err); }
   };
 
   const handleUpdateIncident = async (id: number, payload: any) => {
-    try {
-      await incidentApi.update(id, payload);
-      await syncWorkspaceData();
-    } catch (err) { console.error(err); }
+    try { await incidentApi.update(id, payload); await syncWorkspaceData(); }
+    catch (err) { console.error(err); }
   };
 
   const handleDeleteIncident = async (id: number) => {
-    try {
-      await incidentApi.delete(id);
-      await syncWorkspaceData();
-    } catch (err) { console.error(err); }
+    try { await incidentApi.delete(id); await syncWorkspaceData(); }
+    catch (err) { console.error(err); }
   };
 
   // ─── DSA operations ──────────────────────────────────────────
@@ -241,9 +267,7 @@ export default function App() {
         alert((data as any).message ?? 'Queue is empty');
       }
       await syncWorkspaceData();
-    } catch (err: any) {
-      alert(err.message || 'Queue error');
-    }
+    } catch (err: any) { alert(err.message || 'Queue error'); }
   };
 
   const handleExtractHeapMax = async () => {
@@ -255,9 +279,7 @@ export default function App() {
         alert((data as any).message ?? 'Heap is empty');
       }
       await syncWorkspaceData();
-    } catch (err: any) {
-      alert(err.message || 'Heap error');
-    }
+    } catch (err: any) { alert(err.message || 'Heap error'); }
   };
 
   const handleTriggerUndo = async () => {
@@ -269,17 +291,13 @@ export default function App() {
         alert((data as any).message ?? 'Nothing to undo');
       }
       await syncWorkspaceData();
-    } catch (err: any) {
-      alert(err.message || 'Undo error');
-    }
+    } catch (err: any) { alert(err.message || 'Undo error'); }
   };
 
   // ─── Resources ───────────────────────────────────────────────
   const handleAddResource = async (payload: any) => {
-    try {
-      await resourceApi.create(payload);
-      await syncWorkspaceData();
-    } catch (err) { console.error(err); }
+    try { await resourceApi.create(payload); await syncWorkspaceData(); }
+    catch (err) { console.error(err); }
   };
 
   const handleAssignResource = async (resId: number, incId: number | null) => {
@@ -294,30 +312,23 @@ export default function App() {
   };
 
   const handleUpdateResource = async (id: number, payload: any) => {
-    try {
-      await resourceApi.update(id, payload);
-      await syncWorkspaceData();
-    } catch (err) { console.error(err); }
+    try { await resourceApi.update(id, payload); await syncWorkspaceData(); }
+    catch (err) { console.error(err); }
   };
 
   const handleDeleteResource = async (id: number) => {
-    try {
-      await resourceApi.delete(id);
-      await syncWorkspaceData();
-    } catch (err) { console.error(err); }
+    try { await resourceApi.delete(id); await syncWorkspaceData(); }
+    catch (err) { console.error(err); }
   };
 
   // ─── Shelters ────────────────────────────────────────────────
   const handleAddShelter = async (payload: any) => {
-    try {
-      await shelterApi.create(payload);
-      await syncWorkspaceData();
-    } catch (err) { console.error(err); }
+    try { await shelterApi.create(payload); await syncWorkspaceData(); }
+    catch (err) { console.error(err); }
   };
 
   const handleUpdateShelter = async (id: number, payload: any) => {
     try {
-      // If only occupancy is being updated, use the dedicated endpoint
       if (Object.keys(payload).length === 1 && 'occupancy' in payload) {
         await shelterApi.updateOccupancy(id, payload.occupancy);
       } else {
@@ -328,18 +339,9 @@ export default function App() {
   };
 
   const handleDeleteShelter = async (id: number) => {
-    try {
-      await shelterApi.delete(id);
-      await syncWorkspaceData();
-    } catch (err) { console.error(err); }
+    try { await shelterApi.delete(id); await syncWorkspaceData(); }
+    catch (err) { console.error(err); }
   };
-
-  // ─── Public report submission (LandingPage) ───────────────────
-  // LandingPage calls /api/reports/emergency which doesn't exist in our backend.
-  // We map it to a regular incident creation so it still works.
-  // The LandingPage component uses fetch directly — intercept via Vite proxy or
-  // add a note to proxy /api/reports/emergency → /api/incidents on the backend.
-  // No changes needed here; the proxy config in vite.config.ts handles it.
 
   // ─── Render ───────────────────────────────────────────────────
   return (
